@@ -8,13 +8,13 @@ import boto3
 import ray
 from transformers import LlamaTokenizerFast
 
-from llmperf.ray_llm_client import LLMClient
-from llmperf.models import RequestConfig
 from llmperf import common_metrics
+from llmperf.models import RequestConfig
+from llmperf.ray_llm_client import LLMClient
 
 
 @ray.remote
-class SageMakerClient(LLMClient):
+class SageMakerNeuronClient(LLMClient):
     """Client for OpenAI Chat Completions API."""
 
     def __init__(self):
@@ -35,10 +35,6 @@ class SageMakerClient(LLMClient):
         prompt = request_config.prompt
         prompt, prompt_len = prompt
 
-        message = [
-            {"role": "system", "content": ""},
-            {"role": "user", "content": prompt},
-        ]
         model = request_config.model
         sm_runtime = boto3.client(
             "sagemaker-runtime", region_name=os.environ.get("AWS_REGION_NAME")
@@ -50,17 +46,19 @@ class SageMakerClient(LLMClient):
             sampling_params["max_new_tokens"] = sampling_params["max_tokens"]
             del sampling_params["max_tokens"]
 
+        msg_input = [{"role": "user", "content": prompt}]
+
         message = {
-            "inputs": [
-                [
-                    {"role": "system", "content": ""},
-                    {"role": "user", "content": prompt},
-                ]
-            ],
+            "inputs": msg_input,
             "parameters": {
-                **request_config.sampling_params,
+                **sampling_params,
             },
         }
+        print(
+            "this is sampling_params",
+            sampling_params,
+            flush=True,
+        )
 
         time_to_next_token = []
         tokens_received = 0
@@ -76,25 +74,16 @@ class SageMakerClient(LLMClient):
         most_recent_received_token_time = time.monotonic()
 
         try:
-            response = sm_runtime.invoke_endpoint_with_response_stream(
+            response = sm_runtime.invoke_endpoint(
                 EndpointName=model,
                 ContentType="application/json",
                 Body=json.dumps(message),
                 CustomAttributes="accept_eula=true",
             )
+            print("this is response", response, flush=True)
 
-            event_stream = response["Body"]
-            json_byte = b""
-            for line, ttft, _ in LineIterator(event_stream):
-                json_byte += line
-                time_to_next_token.append(
-                    time.monotonic() - most_recent_received_token_time
-                )
-                most_recent_received_token_time = time.monotonic()
-            ttft = ttft - start_time
-            resp = json.loads(json_byte)
             total_request_time = time.monotonic() - start_time
-            generated_text = resp[0]["generation"]["content"]
+            generated_text = response["Body"].read().decode("utf8")
             tokens_received = len(self.tokenizer.encode(generated_text))
             output_throughput = tokens_received / total_request_time
 
@@ -106,8 +95,8 @@ class SageMakerClient(LLMClient):
 
         metrics[common_metrics.ERROR_MSG] = error_msg
         metrics[common_metrics.ERROR_CODE] = error_response_code
-        metrics[common_metrics.INTER_TOKEN_LAT] = time_to_next_token
-        metrics[common_metrics.TTFT] = ttft
+        metrics[common_metrics.INTER_TOKEN_LAT] = 0
+        metrics[common_metrics.TTFT] = 0
         metrics[common_metrics.E2E_LAT] = total_request_time
         metrics[common_metrics.REQ_OUTPUT_THROUGHPUT] = output_throughput
         metrics[common_metrics.NUM_TOTAL_TOKENS] = tokens_received + prompt_len
@@ -116,43 +105,3 @@ class SageMakerClient(LLMClient):
 
         return metrics, generated_text, request_config
 
-
-class LineIterator:
-    """
-    A helper class for parsing the byte stream input.
-    Reference: https://aws.amazon.com/blogs/machine-learning/elevating-the-generative-ai-experience-introducing-streaming-support-in-amazon-sagemaker-hosting/
-    """
-
-    def __init__(self, stream):
-        self.byte_iterator = iter(stream)
-        self.buffer = io.BytesIO()
-        self.read_pos = 0
-        self.ttft = 0
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        while True:
-            self.buffer.seek(self.read_pos)
-            line = self.buffer.readline()
-            if line and line[-1] == ord("\n"):
-                if self.ttft == 0:
-                    self.ttft = time.monotonic()
-                self.read_pos += len(line)
-                return line[:-1], self.ttft, time.monotonic()
-            # kyle: dealing with last ']' for chat output
-            if line and self.read_pos == self.buffer.getbuffer().nbytes - 1:
-                self.read_pos += 1
-                return line, self.ttft, time.monotonic()
-            try:
-                chunk = next(self.byte_iterator)
-            except StopIteration:
-                if self.read_pos < self.buffer.getbuffer().nbytes:
-                    continue
-                raise
-            if "PayloadPart" not in chunk:
-                print("Unknown event type:" + chunk)
-                continue
-            self.buffer.seek(0, io.SEEK_END)
-            self.buffer.write(chunk["PayloadPart"]["Bytes"])
