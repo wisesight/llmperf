@@ -3,6 +3,7 @@ import json
 import os
 import time
 from typing import Any, Dict
+from pprint import pprint
 
 import boto3
 import ray
@@ -17,39 +18,33 @@ from llmperf.ray_llm_client import LLMClient
 class BedrockClient(LLMClient):
     """Client for AWS Bedrock Foundation Model on Llama-2-13b-chat"""
 
-    def __init__(self):
-        # Sagemaker doesn't return the number of tokens that are generated so we approximate it by
-        # using the llama tokenizer.
-        # self.tokenizer = LlamaTokenizerFast.from_pretrained(
-        #     "hf-internal-testing/llama-tokenizer"
-        # )
-
     def llm_request(self, request_config: RequestConfig) -> Dict[str, Any]:
         if not os.environ.get("AWS_ACCESS_KEY_ID"):
             raise ValueError("AWS_ACCESS_KEY_ID must be set.")
         if not os.environ.get("AWS_SECRET_ACCESS_KEY"):
             raise ValueError("AWS_SECRET_ACCESS_KEY must be set.")
-        if not os.environ.get("AWS_REGION_NAME"):
-            raise ValueError("AWS_REGION_NAME must be set.")
+        if not os.environ.get("AWS_REGION"):
+            raise ValueError("AWS_REGION must be set.")
 
         prompt = request_config.prompt
         prompt, _ = prompt
         model = request_config.model
 
-        bedrock_runtime = boto3.client(service_name="bedrock-runtime", region_name="us-west-2")
-        
+        bedrock_runtime = boto3.client(
+            service_name="bedrock-runtime", region_name="us-west-2"
+        )
+
         sampling_params = request_config.sampling_params
-        
-        if "max_tokens" in sampling_params:
-            sampling_params["max_new_tokens"] = sampling_params["max_tokens"]
-            del sampling_params["max_tokens"]
-        
+
         body = {
             "prompt": prompt,
-            "temperature": 0.5,
-            "top_p": 0.9,
-            "max_gen_len": 512,
+            "max_gen_len": None,
         }
+        # use max gen length from sampling_params
+        if "max_tokens" in sampling_params:
+            body["max_gen_len"] = sampling_params["max_tokens"]
+            del sampling_params["max_tokens"]
+
         time_to_next_token = []
         tokens_received = 0
         ttft = 0
@@ -63,15 +58,19 @@ class BedrockClient(LLMClient):
         start_time = time.monotonic()
         most_recent_received_token_time = time.monotonic()
         try:
-            response = bedrock_runtime.invoke_model(modelId="meta.llama2-13b-chat-v1", body = json.dumps(body))
+            response = bedrock_runtime.invoke_model(
+                modelId="meta.llama2-13b-chat-v1", body=json.dumps(body)
+            )
             total_request_time = time.monotonic() - start_time
-            
+
             response_body = json.loads(response["body"].read())
             tokens_received = response_body["generation_token_count"]
             prompt_token = response_body["prompt_token_count"]
-            
+
+            pprint(response_body)
+
             output_throughput = tokens_received / total_request_time
-        
+
         except Exception as e:
             print(f"Warning Or Error: {e}")
             print(error_response_code)
