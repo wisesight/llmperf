@@ -37,7 +37,9 @@ class SelfHostGPUClient(LLMClient):
         model = request_config.model
         sampling_params = request_config.sampling_params
         message = {
-            "text_input": prompt,
+            "prompt": prompt,
+            "n": 1,
+            "use_beam_search": False,
             }
         
         message["max_tokens"] = sampling_params["max_tokens"]
@@ -58,7 +60,7 @@ class SelfHostGPUClient(LLMClient):
         try:
             response = requests.post(model, json= message)
             total_request_time = time.monotonic() - start_time
-            generated_text = response.json()["text_output"]
+            generated_text = response.json()["text"][0]
             tokens_received = len(self.tokenizer.encode(generated_text))
             output_throughput = tokens_received / total_request_time
 
