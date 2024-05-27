@@ -44,9 +44,7 @@ class SelfHostGPUClient(LLMClient):
         
         message["max_tokens"] = sampling_params["max_tokens"]
         
-        time_to_next_token = []
         tokens_received = 0
-        ttft = 0
         error_response_code = None
         generated_text = ""
         error_msg = ""
@@ -55,7 +53,6 @@ class SelfHostGPUClient(LLMClient):
         metrics = {}
 
         start_time = time.monotonic()
-        most_recent_received_token_time = time.monotonic()
 
         try:
             response = requests.post(model, json= message)

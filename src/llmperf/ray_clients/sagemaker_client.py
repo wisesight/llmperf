@@ -14,7 +14,7 @@ from llmperf.ray_llm_client import LLMClient
 
 
 @ray.remote
-class SageMakerNeuronClient(LLMClient):
+class SageMakerClient(LLMClient):
     """Client for OpenAI Chat Completions API."""
 
     def __init__(self):
@@ -60,9 +60,7 @@ class SageMakerNeuronClient(LLMClient):
             flush=True,
         )
 
-        time_to_next_token = []
         tokens_received = 0
-        ttft = 0
         error_response_code = None
         generated_text = ""
         error_msg = ""
@@ -71,7 +69,6 @@ class SageMakerNeuronClient(LLMClient):
         metrics = {}
 
         start_time = time.monotonic()
-        most_recent_received_token_time = time.monotonic()
 
         try:
             response = sm_runtime.invoke_endpoint(

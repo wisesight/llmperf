@@ -7,7 +7,7 @@ from llmperf.ray_clients.openai_chat_completions_client import (
 from llmperf.ray_clients.self_host_gpu_client import SelfHostGPUClient
 from llmperf.ray_clients.vertexai_client import VertexAIClient
 from llmperf.ray_llm_client import LLMClient
-
+from llmperf.ray_clients.sagemaker_client import SageMakerClient
 
 SUPPORTED_APIS = ["openai", "anthropic", "litellm"]
 
